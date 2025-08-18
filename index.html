@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Clasificador de Audio</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.8.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.0/dist/speech-commands.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f8ff;
+      margin: 0;
+      padding: 0;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      padding: 10px 20px;
+      background-color: #005ecb;
+      color: white;
+    }
+
+    header img {
+      height: 60px;
+      margin-right: 20px;
+    }
+
+    header div {
+      line-height: 1.2;
+      text-align: center; /* Centra el texto dentro del div */
+      flex: 1;             /* Ocupa el espacio restante */
+    }
+
+    main {
+      text-align: center;
+      padding: 20px;
+    }
+
+    canvas#audio-visualizer {
+      margin: 20px auto;
+      display: block;
+      background: #222;
+      border-radius: 8px;
+    }
+
+    #current-result {
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 20px;
+    }
+
+    #results-wrapper {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 30px;
+      max-width: 900px;
+      margin: 20px auto;
+      flex-wrap: wrap;
+    }
+
+    #label-container {
+      flex: 1;
+      min-width: 350px;
+      text-align: left;
+    }
+
+    .bar-container {
+      display: flex;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .label {
+      width: 130px;
+      font-weight: bold;
+      text-align: left;
+    }
+
+    .bar {
+      flex: 1;
+      height: 25px;
+      background-color: #d0d0d0;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-left: 10px;
+    }
+
+    .fill {
+      height: 100%;
+      text-align: left;
+      color: white;
+      line-height: 25px;
+      padding-left: 10px;
+      border-radius: 8px;
+      white-space: nowrap;
+    }
+
+    #winner-image-container {
+      width: 250px;
+      height: 250px;
+      text-align: center;
+    }
+
+    #winner-image {
+  width: 100%;
+  height: auto; /* Se quita el valor fijo de altura para evitar recorte */
+  object-fit: contain; /* Asegura que la imagen no se corte */
+  border-radius: 8px;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.2);
+}
+
+    button {
+      padding: 12px 24px;
+      font-size: 16px;
+      background-color: #005ecb;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="img/logo.png" alt="Logo del colegio" />
+    <div>
+      <strong>Institución Educativa Emblemática N°1070 Melitón Carvajal</strong><br />
+      2do "D" Primaria<br />
+      Alumno: Jahaziel Lazo Quinte
+    </div>
+  </header>
+
+  <main>
+    <h1>¡Detector Mágico de Sonidos con Inteligencia Artificial!</h1>
+    <h2>Cuidemos nuestros oídos</h2>
+    <p>Habla al micrófono y el robot te dirá qué escucha.</p>
+    <button id="start-button">Empezar detección</button>
+
+    <canvas id="audio-visualizer" width="400" height="70"></canvas>
+
+    <div id="current-result"></div>
+
+    <div id="results-wrapper">
+      <div id="label-container"></div>
+      <div id="winner-image-container">
+        <img id="winner-image" src="" alt="Resultado" />
+      </div>
+    </div>
+  </main>
+
+  <script>
+    //const URL = "./model/";
+    const URL = "http://localhost:8080/model/";
+
+    let audioContext, analyser, dataArray, sourceNode, animationId;
+    const classColors = {
+      "ruido_fuerte": "#ff595e",
+      "Ruido con moderación": "#ffca3a",
+      "silencio": "#4CAF50"
+    };
+
+    async function requestMicAccess() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => track.stop());
+        console.log("🎤 Micrófono autorizado");
+        return true;
+      } catch (err) {
+        alert("No se pudo acceder al micrófono. Revisa permisos.");
+        console.error(err);
+        return false;
+      }
+    }
+
+    async function startAudioVisualizer() {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioContext.createAnalyser();
+      sourceNode = audioContext.createMediaStreamSource(stream);
+
+      sourceNode.connect(analyser);
+      analyser.fftSize = 256;
+      const bufferLength = analyser.frequencyBinCount;
+      dataArray = new Uint8Array(bufferLength);
+
+      const canvas = document.getElementById("audio-visualizer");
+      const ctx = canvas.getContext("2d");
+      const WIDTH = canvas.width;
+      const HEIGHT = canvas.height;
+
+      function draw() {
+        animationId = requestAnimationFrame(draw);
+        analyser.getByteFrequencyData(dataArray);
+        ctx.fillStyle = "#222";
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+        const barWidth = (WIDTH / bufferLength) * 2.5;
+        let barHeight;
+        let x = 0;
+
+        for (let i = 0; i < bufferLength; i++) {
+          barHeight = dataArray[i];
+          ctx.fillStyle = `rgb(${barHeight + 100},50,50)`;
+          ctx.fillRect(x, HEIGHT - barHeight / 2, barWidth, barHeight / 2);
+          x += barWidth + 1;
+        }
+      }
+
+      draw();
+    }
+
+    async function createModel() {
+      const checkpointURL = URL + "model.json";
+      const metadataURL = URL + "metadata.json";
+
+      const recognizer = speechCommands.create(
+        "BROWSER_FFT",
+        undefined,
+        checkpointURL,
+        metadataURL
+      );
+
+      await recognizer.ensureModelLoaded();
+      return recognizer;
+    }
+
+    async function init() {
+      const recognizer = await createModel();
+      const labels = recognizer.wordLabels();
+
+      const displayOrder = ["ruido_fuerte", "Ruido con moderación", "silencio"];
+      const displayNames = {
+        "ruido_fuerte": "Ruido Fuerte",
+        "Ruido con moderación": "Sonido tranquilo",
+        "silencio": "Silencio"
+      };
+
+      const labelContainer = document.getElementById("label-container");
+      labelContainer.innerHTML = "";
+
+      displayOrder.forEach(className => {
+        const container = document.createElement("div");
+        container.className = "bar-container";
+
+        const label = document.createElement("div");
+        label.className = "label";
+        label.innerText = displayNames[className];
+
+        const bar = document.createElement("div");
+        bar.className = "bar";
+
+        const fill = document.createElement("div");
+        fill.className = "fill";
+        fill.style.width = "0%";
+        fill.style.backgroundColor = classColors[className] || "#888";
+        fill.id = "bar-" + className;
+
+        bar.appendChild(fill);
+        container.appendChild(label);
+        container.appendChild(bar);
+        labelContainer.appendChild(container);
+      });
+
+      recognizer.listen(result => {
+        const scores = result.scores;
+        let topClassIndex = 0;
+
+        displayOrder.forEach(className => {
+          const modelClass = className === "Ruido con moderación" ? "Ruido de fondo" : className;
+          const originalIndex = labels.indexOf(modelClass);
+          const score = scores[originalIndex] || 0;
+          const percent = (score * 100).toFixed(2);
+
+          const bar = document.getElementById("bar-" + className);
+          if (bar) {
+            bar.style.width = percent + "%";
+            bar.textContent = percent + "%";
+          }
+
+          if (score > scores[topClassIndex]) {
+            topClassIndex = originalIndex;
+          }
+        });
+
+        const winnerClass = labels[topClassIndex];
+        const imagePath = `img/${winnerClass.replace(/ /g, "_")}.jpeg`;
+        //console.log("🖼️ Imagen buscada:", imagePath);
+        const winnerImage = document.getElementById("winner-image");
+        winnerImage.src = imagePath;
+        winnerImage.alt = winnerClass;
+
+        const detectedDisplayName = displayNames[
+          displayOrder.find(c => {
+            const modelC = (c === "Ruido con moderación") ? "Ruido de fondo" : c;
+            return labels.indexOf(modelC) === topClassIndex;
+          })
+        ] || winnerClass;
+
+        document.getElementById("current-result").innerText = "Detectado: " + detectedDisplayName;
+      }, {
+        probabilityThreshold: 0.2,
+        overlapFactor: 0.2,
+        includeSpectrogram: true,
+        invokeCallbackOnNoiseAndUnknown: true
+      });
+    }
+
+    document.getElementById("start-button").addEventListener("click", async () => {
+      const granted = await requestMicAccess();
+      if (granted) {
+        await startAudioVisualizer();
+        await init();
+        document.getElementById("start-button").style.display = "none";
+      }
+    });
+  </script>
+</body>
+</html>
