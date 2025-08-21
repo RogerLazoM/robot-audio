@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Clasificador de Audio</title>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.8.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.0/dist/speech-commands.min.js"></script>
@@ -15,21 +16,21 @@
 
     header {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       padding: 10px 20px;
       background-color: #005ecb;
       color: white;
+      text-align: center;
     }
 
     header img {
-      height: 60px;
-      margin-right: 20px;
+      height: 50px;
+      margin: 0 auto 10px;
     }
 
     header div {
-      line-height: 1.2;
-      text-align: center; /* Centra el texto dentro del div */
-      flex: 1;             /* Ocupa el espacio restante */
+      flex: 1 1 100%;
     }
 
     main {
@@ -42,6 +43,9 @@
       display: block;
       background: #222;
       border-radius: 8px;
+      width: 90%;
+      max-width: 400px;
+      height: auto;
     }
 
     #current-result {
@@ -54,15 +58,16 @@
       display: flex;
       justify-content: center;
       align-items: flex-start;
-      gap: 30px;
-      max-width: 900px;
-      margin: 20px auto;
       flex-wrap: wrap;
+      gap: 20px;
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 10px;
     }
 
     #label-container {
-      flex: 1;
-      min-width: 350px;
+      flex: 1 1 300px;
+      min-width: 250px;
       text-align: left;
     }
 
@@ -98,18 +103,18 @@
     }
 
     #winner-image-container {
-      width: 250px;
-      height: 250px;
+      flex: 1 1 250px;
+      max-width: 300px;
       text-align: center;
     }
 
     #winner-image {
-  width: 100%;
-  height: auto; /* Se quita el valor fijo de altura para evitar recorte */
-  object-fit: contain; /* Asegura que la imagen no se corte */
-  border-radius: 8px;
-  box-shadow: 0 0 8px rgba(0, 0, 0, 0.2);
-}
+      width: 100%;
+      height: auto;
+      object-fit: contain;
+      border-radius: 8px;
+      box-shadow: 0 0 8px rgba(0, 0, 0, 0.2);
+    }
 
     button {
       padding: 12px 24px;
@@ -120,6 +125,33 @@
       border-radius: 5px;
       cursor: pointer;
       margin-top: 20px;
+      width: 90%;
+      max-width: 250px;
+    }
+
+    @media (max-width: 600px) {
+      header {
+        flex-direction: column;
+      }
+
+      #label-container, #winner-image-container {
+        flex: 1 1 100%;
+        max-width: 100%;
+      }
+
+      .label {
+        width: 100px;
+        font-size: 14px;
+      }
+
+      .bar {
+        height: 20px;
+      }
+
+      .fill {
+        font-size: 12px;
+        padding-left: 6px;
+      }
     }
   </style>
 </head>
@@ -140,7 +172,6 @@
     <button id="start-button">Empezar detección</button>
 
     <canvas id="audio-visualizer" width="400" height="70"></canvas>
-
     <div id="current-result"></div>
 
     <div id="results-wrapper">
@@ -152,22 +183,23 @@
   </main>
 
   <script>
-    //const URL = "./model/";
-    //const URL = "http://localhost:8080/model/";
-    const URL = "https://rogerlazom.github.io/robot-audio/model/";
-
+    const URL = "http://localhost:8080/model/";
     let audioContext, analyser, dataArray, sourceNode, animationId;
+
     const classColors = {
       "ruido_fuerte": "#ff595e",
       "Ruido con moderación": "#ffca3a",
       "silencio": "#4CAF50"
     };
 
+    let lastPredictions = [];
+    const MAX_HISTORY = 1;
+    let lastUpdateTime = 0;
+
     async function requestMicAccess() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach(track => track.stop());
-        console.log("🎤 Micrófono autorizado");
         return true;
       } catch (err) {
         alert("No se pudo acceder al micrófono. Revisa permisos.");
@@ -232,11 +264,11 @@
       const recognizer = await createModel();
       const labels = recognizer.wordLabels();
 
-      const displayOrder = ["ruido_fuerte", "Ruido con moderación", "silencio"];
+      const displayOrder = ["silencio", "Ruido con moderación", "ruido_fuerte"];
       const displayNames = {
-        "ruido_fuerte": "Ruido Fuerte",
-        "Ruido con moderación": "Sonido tranquilo",
-        "silencio": "Silencio"
+        "silencio": "Silencio",
+        "Ruido con moderación": "Hablar normal",
+        "ruido_fuerte": "Ruido Fuerte"
       };
 
       const labelContainer = document.getElementById("label-container");
@@ -266,6 +298,10 @@
       });
 
       recognizer.listen(result => {
+        const now = Date.now();
+        if (now - lastUpdateTime < 800) return;
+        lastUpdateTime = now;
+
         const scores = result.scores;
         let topClassIndex = 0;
 
@@ -286,9 +322,25 @@
           }
         });
 
-        const winnerClass = labels[topClassIndex];
-        const imagePath = `img/${winnerClass.replace(/ /g, "_")}.jpeg`;
-        //console.log("🖼️ Imagen buscada:", imagePath);
+        const currentWinner = labels[topClassIndex];
+        lastPredictions.push(currentWinner);
+        if (lastPredictions.length > MAX_HISTORY) lastPredictions.shift();
+
+        const counts = {};
+        lastPredictions.forEach(label => {
+          counts[label] = (counts[label] || 0) + 1;
+        });
+
+        let winnerClass = currentWinner;
+        let maxCount = 0;
+        for (const label in counts) {
+          if (counts[label] > maxCount) {
+            maxCount = counts[label];
+            winnerClass = label;
+          }
+        }
+
+        const imagePath = `img/${winnerClass.replace(/ /g, "_")}.jpg`;
         const winnerImage = document.getElementById("winner-image");
         winnerImage.src = imagePath;
         winnerImage.alt = winnerClass;
@@ -296,13 +348,13 @@
         const detectedDisplayName = displayNames[
           displayOrder.find(c => {
             const modelC = (c === "Ruido con moderación") ? "Ruido de fondo" : c;
-            return labels.indexOf(modelC) === topClassIndex;
+            return labels.indexOf(modelC) === labels.indexOf(winnerClass);
           })
         ] || winnerClass;
 
         document.getElementById("current-result").innerText = "Detectado: " + detectedDisplayName;
       }, {
-        probabilityThreshold: 0.2,
+        probabilityThreshold: 0.5,
         overlapFactor: 0.2,
         includeSpectrogram: true,
         invokeCallbackOnNoiseAndUnknown: true
